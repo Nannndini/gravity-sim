@@ -45,8 +45,8 @@ vel(t+dt) = vel(t) + ½·(a(t) + a(t+dt))·dt
 ## Roadmap
 
 - [x] v0.1 — Physics engine (terminal output)
-- [ ] v0.2 — OpenGL window, render bodies as spheres
-- [ ] v0.3 — Spacetime grid mesh (warped by mass)
+- [x] v0.2 — OpenGL window, render bodies as spheres
+- [x] v0.3 — Spacetime grid mesh (warped by mass)
 - [ ] v0.4 — Collision detection and merging
 
 ## Structure

@@ -166,6 +166,34 @@ void processInput(GLFWwindow *window) {
     if (kPressed && !wasKPressed) isPaused = !isPaused;
     wasKPressed = kPressed;
 
+    // Keyboard-only Spawning (Hold SPACE to spawn, M to increase mass)
+    static bool wasSpace = false;
+    bool spaceDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+    if (spaceDown && !wasSpace && globalSim) {
+        Vec3 pos = cameraPos + cameraFront * 1200.0f;
+        globalSim->addBody({"Spawned", pos, {0,0,0}, 15.0, 20.0});
+        isSpawning = true;
+    }
+    if (!spaceDown && wasSpace) {
+        // If space is released and mouse isn't holding, let go
+        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
+            isSpawning = false;
+        }
+    }
+    wasSpace = spaceDown;
+
+    static double lastM = 0;
+    if (isSpawning && glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS && globalSim) {
+        if (glfwGetTime() - lastM > 0.1) { // Throttle growth rate to match repeated clicking
+            auto& bodies = globalSim->getMutableBodies();
+            if(!bodies.empty()){
+                bodies.back().mass *= 1.2;
+                bodies.back().radius = std::cbrt(bodies.back().mass) * 8.0f;
+            }
+            lastM = glfwGetTime();
+        }
+    }
+
     // Sandbox positioning
     if (isSpawning && globalSim) {
         auto& bodies = globalSim->getMutableBodies();
@@ -207,10 +235,10 @@ void main() {
         warpX += pull * diff.x / dist;
         warpY += pull * diff.y / dist;
         
-        // Einstein Schwarzschild mathematically correct depth funnel
-        float rs = bodyMass[i] * 5.0; // Scaled to our units
-        float dz = 2.0 * sqrt(max(rs * (dist * 10.0 - rs), 0.0));
-        z -= dz * 1.5;
+        // Dynamically compute massive overlapping black-hole spacetime funnels without singularities
+        // By using an inverse-distance falloff, the ripples smoothly add together when bodies merge
+        float warpZ = (bodyMass[i] * 6.0) / (dist * 0.05 + 1.0);
+        z -= warpZ;
     }
     
     vec2 pos = aPos + vec2(warpX, warpY);
@@ -402,10 +430,10 @@ int main() {
     
     RenderData sphereMesh = createSphere(36, 18);
     
-    // Create static grid mesh
+    // Create high-resolution dynamic grid mesh
     std::vector<float> gridLines;
-    int cols = 35, rows = 35; // Lower density resembles the video's larger squares
-    float gridSize = 1600.0f; 
+    int cols = 120, rows = 120; // Massive high resolution for beautiful curved funnels
+    float gridSize = 3000.0f;
     float dx = gridSize * 2.0f / cols;
     float dy = gridSize * 2.0f / rows;
     for (int row = 0; row <= rows; ++row) {
@@ -429,11 +457,11 @@ int main() {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // Setup Physics
+    // Setup Physics: Classic Solar System Scenario
     Simulation sim(0.01);
     globalSim = &sim; 
 
-    // Adjusted masses and starting positions to mimic the three specific planets in the screenshot layout
+    // Restoring the beautiful multi-planet layout!
     sim.addBody({"Sun",    {0,   0,   0}, {0,    0,   0}, 1000.0, 50.0});
     sim.addBody({"Earth",  {-300, 20, 0}, {0,   -2.2, 0},   20.0, 24.0});
     sim.addBody({"Mars",   {250, 400, 0}, {-1.0, 1.5, 0},    8.0, 14.0});

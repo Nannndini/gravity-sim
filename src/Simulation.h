@@ -15,6 +15,7 @@ public:
     void addBody(Body body);
     void step();                    // one Euler step
     void stepVerlet();              // one Velocity-Verlet step (more stable)
+    void handleCollisions();        // detect overlapping bodies and merge them
 
     double totalEnergy()     const;
     double totalKE()         const;

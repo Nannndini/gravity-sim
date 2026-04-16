@@ -30,6 +30,7 @@ Vec3 Simulation::acceleration(int i) const {
 
 // Basic Euler integration — simple but loses energy over time
 void Simulation::step() {
+    handleCollisions();
     int n = _bodies.size();
     std::vector<Vec3> accs(n);
 
@@ -52,6 +53,7 @@ void Simulation::step() {
 //   2. a(t+dt)    = f( pos(t+dt) )
 //   3. vel(t+dt)  = vel(t) + 0.5*(a(t) + a(t+dt))*dt
 void Simulation::stepVerlet() {
+    handleCollisions();
     int n = _bodies.size();
     std::vector<Vec3> oldAcc(n);
     std::vector<Vec3> newAcc(n);
@@ -78,6 +80,42 @@ void Simulation::stepVerlet() {
     _time += _dt;
 }
 
+void Simulation::handleCollisions() {
+    bool collisionOccurred = true;
+    while (collisionOccurred) {
+        collisionOccurred = false;
+        for (int i = 0; i < (int)_bodies.size(); ++i) {
+            for (int j = i + 1; j < (int)_bodies.size(); ++j) {
+                Vec3 diff = _bodies[j].pos - _bodies[i].pos;
+                double dist = diff.length();
+                if (dist < _bodies[i].radius + _bodies[j].radius) {
+                    Body& bi = _bodies[i];
+                    Body& bj = _bodies[j];
+                    
+                    double newMass = bi.mass + bj.mass;
+                    Vec3 newVel = (bi.vel * bi.mass + bj.vel * bj.mass) * (1.0 / newMass);
+                    Vec3 newPos = (bi.pos * bi.mass + bj.pos * bj.mass) * (1.0 / newMass);
+                    double newRadius = std::cbrt(bi.radius*bi.radius*bi.radius + bj.radius*bj.radius*bj.radius);
+                    
+                    std::string newName = (bi.mass > bj.mass) ? bi.name : bj.name;
+                    if (bi.mass == bj.mass) newName = bi.name + "-" + bj.name;
+                    
+                    bi.mass = newMass;
+                    bi.vel = newVel;
+                    bi.pos = newPos;
+                    bi.radius = newRadius;
+                    bi.name = newName;
+                    
+                    _bodies.erase(_bodies.begin() + j);
+                    
+                    collisionOccurred = true;
+                    break;
+                }
+            }
+            if (collisionOccurred) break;
+        }
+    }
+}
 double Simulation::totalKE() const {
     double ke = 0;
     for (const auto& b : _bodies) ke += b.kineticEnergy();

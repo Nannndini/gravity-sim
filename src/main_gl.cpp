@@ -488,6 +488,20 @@ void emulateMainLoop() {
     }
 
     glfwGetFramebufferSize(win, &W, &H);
+    
+#ifdef __EMSCRIPTEN__
+    // Fix aspect ratio egg-stretching permanently!
+    EM_ASM({
+        var canvas = document.getElementById('canvas');
+        if (canvas.width != window.innerWidth || canvas.height != window.innerHeight) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+    });
+    W = EM_ASM_INT({ return canvas.width; });
+    H = EM_ASM_INT({ return canvas.height; });
+#endif
+    
     glViewport(0, 0, W, H);
     glClearColor(0.02f, 0.02f, 0.03f, 1.0f); // Dark space
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

@@ -24,6 +24,7 @@ public:
     Vec3   totalMomentum()   const;
 
     const std::vector<Body>& bodies() const { return _bodies; }
+    std::vector<Body>& getMutableBodies() { return _bodies; }
     double time() const { return _time; }
 
 private:

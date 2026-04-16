@@ -74,17 +74,45 @@ Mat4 inverseTransposeScaleTranslate(const Vec3& pos, float s) {
 }
 
 // ── Camera Globals ───────────────────────────────────────────────────────────
-Vec3 cameraPos = {0.0, -800.0, 300.0};
-Vec3 cameraFront = {0.0, 1.0, -0.3};
+Vec3 cameraPos = {0.0, -1100.0, 300.0};
+Vec3 cameraFront = {0.0, 1.0, -0.27};
 Vec3 cameraUp = {0.0, 0.0, 1.0};
 float yaw = 90.0f;
-float pitch = -16.0f;
+float pitch = -15.0f;
 float lastX = 500, lastY = 400;
 bool firstMouse = true;
 double deltaTime = 0.0;
 double lastFrameTime = 0.0;
 bool isMouseLocked = true;
 bool wasTabPressed = false;
+
+// Sandbox Mode Globals
+bool isPaused = false;
+bool wasKPressed = false;
+bool isSpawning = false;
+Simulation* globalSim = nullptr; // For callbacks
+
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    if (!globalSim) return;
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            Vec3 pos = cameraPos + cameraFront * 1200.0f; // Drop in front of camera
+            globalSim->addBody({"Spawned", pos, {0,0,0}, 15.0, 20.0});
+            isSpawning = true;
+        } else if (action == GLFW_RELEASE) {
+            isSpawning = false;
+        }
+    }
+    if (isSpawning && button == GLFW_MOUSE_BUTTON_RIGHT) {
+        if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+            auto& bodies = globalSim->getMutableBodies();
+            if (!bodies.empty()) {
+                bodies.back().mass *= 1.2;
+                bodies.back().radius = std::cbrt(bodies.back().mass) * 8.0f;
+            }
+        }
+    }
+}
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if(!isMouseLocked) {
@@ -126,11 +154,29 @@ void processInput(GLFWwindow *window) {
     if (!isMouseLocked) return;
 
     float cameraSpeed = 500.0f * deltaTime;
-    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) cameraSpeed *= 4.0f;
+    bool shiftPressed = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+    if (shiftPressed) cameraSpeed *= 4.0f;
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cameraPos += cameraFront * cameraSpeed;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cameraPos = cameraPos - (cameraFront * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cameraPos = cameraPos - (cross(cameraFront, cameraUp).normalized() * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cameraPos += cross(cameraFront, cameraUp).normalized() * cameraSpeed;
+
+    // Pause toggle
+    bool kPressed = glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS;
+    if (kPressed && !wasKPressed) isPaused = !isPaused;
+    wasKPressed = kPressed;
+
+    // Sandbox positioning
+    if (isSpawning && globalSim) {
+        auto& bodies = globalSim->getMutableBodies();
+        if (!bodies.empty()) {
+            float moveSpeed = bodies.back().radius * 0.15f * (shiftPressed ? 4.0f : 1.0f);
+            if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) bodies.back().pos.y += moveSpeed;
+            if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) bodies.back().pos.y -= moveSpeed;
+            if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) bodies.back().pos.x += moveSpeed;
+            if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) bodies.back().pos.x -= moveSpeed;
+        }
+    }
 }
 
 // ── Shaders ──────────────────────────────────────────────────────────────────
@@ -178,10 +224,10 @@ const char* gridFragmentShaderSource = R"(
 in float gridDepth;
 out vec4 FragColor;
 void main() {
-    // White lines that fade in the deep gravity wells
-    float intensity = 1.0 + (gridDepth / 150.0);
-    intensity = clamp(intensity, 0.1, 0.8);
-    FragColor = vec4(1.0, 1.0, 1.0, intensity);
+    // Pure white grid lines with beautiful fading opacity based on depth
+    float opacity = 0.65 + (gridDepth / 400.0); 
+    opacity = clamp(opacity, 0.05, 0.55); // Keep lines visible and cinematic
+    FragColor = vec4(1.0, 1.0, 1.0, opacity);
 }
 )";
 
@@ -340,6 +386,7 @@ int main() {
     if (!win) { std::cerr << "Window creation failed\n"; glfwTerminate(); return -1; }
     glfwMakeContextCurrent(win);
     glfwSetCursorPosCallback(win, mouse_callback);
+    glfwSetMouseButtonCallback(win, mouseButtonCallback);
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED); // Lock mouse inside
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -357,8 +404,8 @@ int main() {
     
     // Create static grid mesh
     std::vector<float> gridLines;
-    int cols = 100, rows = 100;
-    float gridSize = 1500.0f; 
+    int cols = 35, rows = 35; // Lower density resembles the video's larger squares
+    float gridSize = 1600.0f; 
     float dx = gridSize * 2.0f / cols;
     float dy = gridSize * 2.0f / rows;
     for (int row = 0; row <= rows; ++row) {
@@ -384,11 +431,12 @@ int main() {
 
     // Setup Physics
     Simulation sim(0.01);
-    sim.addBody({"Sun",    {0,   0,   0}, {0,    0,   0}, 1000.0, 30.0});
-    sim.addBody({"Earth",  {300, 0,   0}, {0,    3.16,0},    1.0, 10.0});
-    sim.addBody({"Mars",   {450, 0,   0}, {0,    2.58,0},    0.5,  8.0});
-    sim.addBody({"Moon",   {308, 0,   0}, {0,    3.90,0},   0.01,  4.0});
-    sim.addBody({"Jupiter",{650, 0,   0}, {0,    2.18,0},    5.0, 18.0});
+    globalSim = &sim; 
+
+    // Adjusted masses and starting positions to mimic the three specific planets in the screenshot layout
+    sim.addBody({"Sun",    {0,   0,   0}, {0,    0,   0}, 1000.0, 50.0});
+    sim.addBody({"Earth",  {-300, 20, 0}, {0,   -2.2, 0},   20.0, 24.0});
+    sim.addBody({"Mars",   {250, 400, 0}, {-1.0, 1.5, 0},    8.0, 14.0});
 
     while (!glfwWindowShouldClose(win)) {
         double currentFrame = glfwGetTime();
@@ -397,8 +445,21 @@ int main() {
 
         processInput(win);
 
-        for (int i = 0; i < 6; ++i) {
-            sim.stepVerlet();
+        if (!isPaused) {
+            Vec3 lockedPos = {0,0,0};
+            if (isSpawning && !sim.bodies().empty()) {
+                sim.getMutableBodies().back().vel = {0,0,0};
+                lockedPos = sim.bodies().back().pos;
+            }
+            
+            for (int i = 0; i < 6; ++i) {
+                sim.stepVerlet();
+            }
+
+            if (isSpawning && !sim.bodies().empty()) {
+                sim.getMutableBodies().back().pos = lockedPos;
+                sim.getMutableBodies().back().vel = {0,0,0};
+            }
         }
 
         glfwGetFramebufferSize(win, &W, &H);

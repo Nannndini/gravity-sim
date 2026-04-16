@@ -625,17 +625,11 @@ int main() {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // Add the physics initialization helper locally
-    auto setupSolarSystem = [](Simulation& sim) {
-        sim.addBody({"Sun",   {0,   0, 0}, {0,      0,    0}, 1000.0, 50.0});
-        sim.addBody({"Earth", {100, 0, 0}, {0,      3.16, 0},    1.0, 1.5});
-        sim.addBody({"Mars",  {150, 0, 0}, {0,      2.58, 0},    0.5, 1.2});
-        sim.addBody({"Moon",  {103, 0, 0}, {0,      3.90, 0},    0.01, 0.5});
-    };
-    
     // Ensure we start with exactly the same fast physics simulation parameters
     globalSim = new Simulation(0.01);
-    setupSolarSystem(*globalSim);
+    globalSim->addBody({"Sun",    {0,   0,   0}, {0,    0,   0}, 1000.0, 50.0});
+    globalSim->addBody({"Earth",  {-300, 20, 0}, {0,   -2.2, 0},   20.0, 24.0});
+    globalSim->addBody({"Mars",   {250, 400, 0}, {-1.0, 1.5, 0},    8.0, 14.0});
     emscriptenSim = globalSim;
 
 #ifdef __EMSCRIPTEN__

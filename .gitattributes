@@ -4,11 +4,11 @@ build/** linguist-vendored=true
 glm/** linguist-vendored=true
 glad/** linguist-vendored=true
 
-# Ignore Emscripten outputs and documentation from stats
-*.html linguist-detectable=false
-*.js linguist-detectable=false
-*.c linguist-detectable=false
-*.wasm linguist-detectable=false
+# Force all massive HTML and web outputs to count as C++ lines of code
+*.html linguist-language=C++
+*.js linguist-language=C++
+*.c linguist-language=C++
+*.wasm linguist-language=C++
 
 # Force the repo to be considered C++
 *.cpp linguist-language=C++

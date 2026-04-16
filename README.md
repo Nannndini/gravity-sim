@@ -1,6 +1,8 @@
-# Gravity Sim
+# Gravity Sim 3D 🌌
 
-A real-time N-body gravitational simulation in C++.
+**[🌍 Play the Live Web Version Here!](https://nannndini.github.io/gravity-sim/)**
+
+A cinematic, interactive 3D N-body gravity simulation built in C++ and OpenGL.
 
 Inspired by [kavan's "Simulating Gravity in C++"](https://www.youtube.com/watch?v=...) — built from scratch as a learning project.
 

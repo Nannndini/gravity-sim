@@ -1,7 +1,14 @@
 # .gitattributes
 # Override GitHub Linguist to ignore the build directory and dependencies completely
-build/** linguist-vendored
-glm/** linguist-vendored
+build/** linguist-vendored=true
+glm/** linguist-vendored=true
+glad/** linguist-vendored=true
+
+# Ignore Emscripten outputs and documentation from stats
+*.html linguist-detectable=false
+*.js linguist-detectable=false
+*.c linguist-detectable=false
+*.wasm linguist-detectable=false
 
 # Force the repo to be considered C++
 *.cpp linguist-language=C++

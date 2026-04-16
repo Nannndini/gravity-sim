@@ -356,8 +356,8 @@ int main() {
     
     // Create static grid mesh
     std::vector<float> gridLines;
-    int cols = 40, rows = 40;
-    float gridSize = 2500.0f; 
+    int cols = 100, rows = 100;
+    float gridSize = 1500.0f; 
     float dx = gridSize * 2.0f / cols;
     float dy = gridSize * 2.0f / rows;
     for (int row = 0; row <= rows; ++row) {

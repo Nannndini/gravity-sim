@@ -477,7 +477,7 @@ void emulateMainLoop() {
             lockedPos = emscriptenSim->bodies().back().pos;
         }
         
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 50; ++i) {
             emscriptenSim->stepVerlet();
         }
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <deque>
 
 struct Vec3 {
     double x, y, z;
@@ -23,6 +24,7 @@ struct Body {
     Vec3   vel;
     double mass;
     double radius;
+    std::deque<Vec3> trail;
 
     Body(std::string name, Vec3 pos, Vec3 vel, double mass, double radius)
         : name(std::move(name)), pos(pos), vel(vel), mass(mass), radius(radius) {}

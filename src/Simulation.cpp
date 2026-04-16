@@ -68,13 +68,18 @@ void Simulation::stepVerlet() {
                         + oldAcc[i] * (0.5 * _dt * _dt);
     }
 
-    // Step 3: compute new accelerations at updated positions
-    for (int i = 0; i < n; ++i)
-        newAcc[i] = acceleration(i);
-
-    // Step 4: update velocities using average acceleration
-    for (int i = 0; i < n; ++i) {
-        _bodies[i].vel += (oldAcc[i] + newAcc[i]) * (0.5 * _dt);
+    // 3) Calculate new accelerations and update velocities
+    for (size_t i = 0; i < n; ++i) {
+        Vec3 acc_new = acceleration(i);
+        _bodies[i].vel += (oldAcc[i] + acc_new) * (_dt * 0.5);
+        
+        // Save trail for rendering (record a point every few units of movement)
+        if (_bodies[i].trail.empty() || (_bodies[i].pos - _bodies[i].trail.back()).lengthSq() > 50.0) {
+            _bodies[i].trail.push_back(_bodies[i].pos);
+            if (_bodies[i].trail.size() > 1000) {
+                _bodies[i].trail.pop_front();
+            }
+        }
     }
 
     _time += _dt;

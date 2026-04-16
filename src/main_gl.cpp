@@ -113,8 +113,9 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
-            Vec3 pos = cameraPos + cameraFront * 1200.0f; // Drop in front of camera
-            globalSim->addBody({"Spawned", pos, {0,0,0}, 15.0, 20.0});
+            Vec3 pos = cameraPos + cameraFront * 150.0f; // Shoot from camera
+            Vec3 vel = {cameraFront.x * 6.0, cameraFront.y * 6.0, cameraFront.z * 6.0}; // Projectile speed
+            globalSim->addBody({"Spawned", pos, vel, 2.0, 5.0});
             isSpawning = true;
         } else if (action == GLFW_RELEASE) {
             isSpawning = false;
@@ -280,9 +281,40 @@ R"(in float gridDepth;
 out vec4 FragColor;
 void main() {
     // Pure white grid lines with beautiful fading opacity based on depth
-    float opacity = 0.65 + (gridDepth / 400.0); 
-    opacity = clamp(opacity, 0.05, 0.55); // Keep lines visible and cinematic
+    float opacity = 0.65 + (gridDepth / 400.0);
+    opacity = clamp(opacity, 0.15, 0.85); // Boosted opacity for WebGL thin lines
     FragColor = vec4(1.0, 1.0, 1.0, opacity);
+}
+)";
+
+const char* trailVertexShaderSource = 
+#ifdef __EMSCRIPTEN__
+"#version 300 es\n"
+"precision highp float;\n"
+#else
+"#version 330 core\n"
+#endif
+R"(
+layout (location = 0) in vec3 aPos;
+uniform mat4 view;
+uniform mat4 proj;
+void main() {
+    gl_Position = proj * view * vec4(aPos, 1.0);
+}
+)";
+
+const char* trailFragmentShaderSource = 
+#ifdef __EMSCRIPTEN__
+"#version 300 es\n"
+"precision highp float;\n"
+#else
+"#version 330 core\n"
+#endif
+R"(
+out vec4 FragColor;
+uniform vec4 trailColor;
+void main() {
+    FragColor = trailColor;
 }
 )";
 
@@ -390,6 +422,13 @@ GLuint createProgram(const char* vs, const char* fs) {
     return prog;
 }
 
+// ── Global State & Uniforms ───────────────────────────────────────────────────
+GLuint trailShader;
+GLuint trailVAO, trailVBO;
+GLuint objShader;
+GLuint gridShader;
+GLuint gridVAO = 0, gridVBO = 0;
+
 // ── Sphere Mesh Generation ───────────────────────────────────────────────────
 struct RenderData { GLuint VAO, VBO, count; };
 struct Vertex { float x, y, z, nx, ny, nz; };
@@ -457,10 +496,8 @@ std::map<std::string, Color> bodyColors = {
 
 int W = 1000, H = 800;
 GLFWwindow* win = nullptr;
-GLuint gridShader = 0, objShader = 0;
 RenderData sphereMesh;
 std::vector<float> gridLines;
-GLuint gridVAO = 0, gridVBO = 0;
 Simulation* emscriptenSim = nullptr; // Global container for the Simulation instance
 
 void emulateMainLoop() {
@@ -559,6 +596,34 @@ void emulateMainLoop() {
 
             glDrawElements(GL_TRIANGLES, sphereMesh.count, GL_UNSIGNED_INT, 0);
         }
+        
+        // 3. Draw Trails behind planets!
+        glUseProgram(trailShader);
+        glUniformMatrix4fv(glGetUniformLocation(trailShader, "view"), 1, GL_FALSE, view.m);
+        glUniformMatrix4fv(glGetUniformLocation(trailShader, "proj"), 1, GL_FALSE, proj.m);
+        
+        glBindVertexArray(trailVAO);
+        for (const auto& b : emscriptenSim->bodies()) {
+            if (b.trail.size() < 2) continue;
+            
+            std::vector<float> lineData;
+            lineData.reserve(b.trail.size() * 3);
+            for (const auto& p : b.trail) {
+                lineData.push_back(p.x); lineData.push_back(p.y); lineData.push_back(p.z);
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, trailVBO);
+            glBufferData(GL_ARRAY_BUFFER, lineData.size() * sizeof(float), lineData.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+            
+            Color c = bodyColors.count(b.name) ? bodyColors[b.name] : Color{0.8f,0.8f,0.8f};
+            glUniform4f(glGetUniformLocation(trailShader, "trailColor"), c.r, c.g, c.b, 0.5f);
+            
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDrawArrays(GL_LINE_STRIP, 0, lineData.size() / 3);
+            glDisable(GL_BLEND);
+        }
     }
     
     glfwSwapBuffers(win);
@@ -595,8 +660,14 @@ int main() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
+    // Compile Shaders
     gridShader = createProgram(gridVertexShaderSource, gridFragmentShaderSource);
-    objShader  = createProgram(sphereVertexShaderSource, sphereFragmentShaderSource);
+    objShader = createProgram(sphereVertexShaderSource, sphereFragmentShaderSource);
+    trailShader = createProgram(trailVertexShaderSource, trailFragmentShaderSource);
+
+    // Setup Trail geometry
+    glGenVertexArrays(1, &trailVAO);
+    glGenBuffers(1, &trailVBO);
     
     sphereMesh = createSphere(36, 18);
     
@@ -627,9 +698,13 @@ int main() {
 
     // Ensure we start with exactly the same fast physics simulation parameters
     globalSim = new Simulation(0.01);
-    globalSim->addBody({"Sun",    {0,   0,   0}, {0,    0,   0}, 1000.0, 50.0});
-    globalSim->addBody({"Earth",  {-300, 20, 0}, {0,   -2.2, 0},   20.0, 24.0});
-    globalSim->addBody({"Mars",   {250, 400, 0}, {-1.0, 1.5, 0},    8.0, 14.0});
+    globalSim->addBody({"Sun",      {0,   0,   0}, {0,    0,   0}, 1000.0, 50.0});
+    globalSim->addBody({"Mercury",  {-120, 0,  0}, {0,  2.8,   0},   2.0,   8.0});
+    globalSim->addBody({"Venus",    {200, 0,  0}, {0,  -2.2,   0},   15.0, 18.0});
+    globalSim->addBody({"Earth",    {-300, 20, 0}, {0,   -2.2, 0},   20.0, 24.0});
+    globalSim->addBody({"Mars",     {400, 50, 0}, {-0.2, 1.5, 0},    8.0, 14.0});
+    globalSim->addBody({"Jupiter",  {-800, -50, 0}, {0,  -1.2, 0},   150.0, 40.0});
+    globalSim->addBody({"Saturn",   {1200, 100, 0}, {0,   0.9, 0},   90.0,  35.0});
     emscriptenSim = globalSim;
 
 #ifdef __EMSCRIPTEN__

@@ -1,4 +1,9 @@
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <GLES3/gl3.h>
+#else
 #include <glad/glad.h>
+#endif
 #include <GLFW/glfw3.h>
 #include "Simulation.h"
 #include <cmath>
@@ -94,6 +99,18 @@ Simulation* globalSim = nullptr; // For callbacks
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
     if (!globalSim) return;
+    
+#ifdef __EMSCRIPTEN__
+    if (action == GLFW_PRESS) {
+        EM_ASM(
+            var canvas = document.getElementById('canvas');
+            if (canvas && document.pointerLockElement !== canvas) {
+                canvas.requestPointerLock();
+            }
+        );
+    }
+#endif
+
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
             Vec3 pos = cameraPos + cameraFront * 1200.0f; // Drop in front of camera
@@ -209,9 +226,14 @@ void processInput(GLFWwindow *window) {
 
 // ── Shaders ──────────────────────────────────────────────────────────────────
 // Grid Shader applies dynamic warping via uniform arrays (gravity fields)
-const char* gridVertexShaderSource = R"(
-#version 330 core
-layout (location = 0) in vec2 aPos;
+const char* gridVertexShaderSource = 
+#ifdef __EMSCRIPTEN__
+"#version 300 es\n"
+"precision highp float;\n"
+#else
+"#version 330 core\n"
+#endif
+R"(layout (location = 0) in vec2 aPos;
 uniform mat4 projection;
 uniform mat4 view;
 uniform int numBodies;
@@ -247,9 +269,14 @@ void main() {
 }
 )";
 
-const char* gridFragmentShaderSource = R"(
-#version 330 core
-in float gridDepth;
+const char* gridFragmentShaderSource = 
+#ifdef __EMSCRIPTEN__
+"#version 300 es\n"
+"precision highp float;\n"
+#else
+"#version 330 core\n"
+#endif
+R"(in float gridDepth;
 out vec4 FragColor;
 void main() {
     // Pure white grid lines with beautiful fading opacity based on depth
@@ -260,9 +287,14 @@ void main() {
 )";
 
 // Sphere Shader mimics video lighting
-const char* sphereVertexShaderSource = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
+const char* sphereVertexShaderSource = 
+#ifdef __EMSCRIPTEN__
+"#version 300 es\n"
+"precision highp float;\n"
+#else
+"#version 330 core\n"
+#endif
+R"(layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
 uniform mat4 projection;
 uniform mat4 view;
@@ -277,9 +309,14 @@ void main() {
 }
 )";
 
-const char* sphereFragmentShaderSource = R"(
-#version 330 core
-in vec3 FragPos;
+const char* sphereFragmentShaderSource = 
+#ifdef __EMSCRIPTEN__
+"#version 300 es\n"
+"precision highp float;\n"
+#else
+"#version 330 core\n"
+#endif
+R"(in vec3 FragPos;
 in vec3 Normal;
 out vec4 FragColor;
 
@@ -308,12 +345,17 @@ void main() {
     // Specular highlight for nice 3D pop
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);  
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
     vec3 specular = 0.5 * spec * vec3(1.0);  
     
     FragColor = vec4(ambient + diffuse + specular, objectColor.a);
 }
 )";
+
+#include <stdio.h> // Add for printf
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 GLuint compileShader(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
@@ -321,8 +363,11 @@ GLuint compileShader(GLenum type, const char* source) {
     glCompileShader(shader);
     int success; glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success) {
-        char infoLog[512]; glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "Shader compile error:\n" << infoLog << "\n";
+        char infoLog[1024]; glGetShaderInfoLog(shader, 1024, nullptr, infoLog);
+        printf("Shader compile error: %s\n", infoLog);
+#ifdef __EMSCRIPTEN__
+        EM_ASM({ alert('Shader compile error: ' + UTF8ToString($0)); }, infoLog);
+#endif
     }
     return shader;
 }
@@ -333,6 +378,14 @@ GLuint createProgram(const char* vs, const char* fs) {
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vShader); glAttachShader(prog, fShader);
     glLinkProgram(prog);
+    int success; glGetProgramiv(prog, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[1024]; glGetProgramInfoLog(prog, 1024, nullptr, infoLog);
+        printf("Program link error: %s\n", infoLog);
+#ifdef __EMSCRIPTEN__
+        EM_ASM({ alert('Program link error: ' + UTF8ToString($0)); }, infoLog);
+#endif
+    }
     glDeleteShader(vShader); glDeleteShader(fShader);
     return prog;
 }
@@ -402,37 +455,139 @@ std::map<std::string, Color> bodyColors = {
     {"Jupiter", {0.8f, 0.6f, 0.3f}}
 };
 
+int W = 1000, H = 800;
+GLFWwindow* win = nullptr;
+GLuint gridShader = 0, objShader = 0;
+RenderData sphereMesh;
+std::vector<float> gridLines;
+GLuint gridVAO = 0, gridVBO = 0;
+Simulation* emscriptenSim = nullptr; // Global container for the Simulation instance
+
+void emulateMainLoop() {
+    double currentFrame = glfwGetTime();
+    deltaTime = currentFrame - lastFrameTime;
+    lastFrameTime = currentFrame;
+
+    processInput(win);
+
+    if (!isPaused && emscriptenSim) {
+        Vec3 lockedPos = {0,0,0};
+        if (isSpawning && !emscriptenSim->bodies().empty()) {
+            emscriptenSim->getMutableBodies().back().vel = {0,0,0};
+            lockedPos = emscriptenSim->bodies().back().pos;
+        }
+        
+        for (int i = 0; i < 6; ++i) {
+            emscriptenSim->stepVerlet();
+        }
+
+        if (isSpawning && !emscriptenSim->bodies().empty()) {
+            emscriptenSim->getMutableBodies().back().pos = lockedPos;
+            emscriptenSim->getMutableBodies().back().vel = {0,0,0};
+        }
+    }
+
+    glfwGetFramebufferSize(win, &W, &H);
+    glViewport(0, 0, W, H);
+    glClearColor(0.02f, 0.02f, 0.03f, 1.0f); // Dark space
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    Mat4 proj = perspective(45.0f * 3.14159f / 180.0f, (float)W / H, 0.1f, 10000.0f);
+    Mat4 view = lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+
+    if (emscriptenSim) {
+        // Upload bodies list to grid shader for warping
+        glUseProgram(gridShader);
+        glUniformMatrix4fv(glGetUniformLocation(gridShader, "projection"), 1, GL_FALSE, proj.m);
+        glUniformMatrix4fv(glGetUniformLocation(gridShader, "view"), 1, GL_FALSE, view.m);
+        glUniform1i(glGetUniformLocation(gridShader, "numBodies"), emscriptenSim->bodies().size());
+        
+        for(size_t i = 0; i < emscriptenSim->bodies().size(); ++i) {
+            std::string nStr = "bodyPos[" + std::to_string(i) + "]";
+            std::string mStr = "bodyMass[" + std::to_string(i) + "]";
+            glUniform3f(glGetUniformLocation(gridShader, nStr.c_str()), 
+                        (float)emscriptenSim->bodies()[i].pos.x, (float)emscriptenSim->bodies()[i].pos.y, (float)emscriptenSim->bodies()[i].pos.z);
+            glUniform1f(glGetUniformLocation(gridShader, mStr.c_str()), (float)emscriptenSim->bodies()[i].mass);
+        }
+
+        // Draw Spacetime Grid
+        glBindVertexArray(gridVAO);
+        glDrawArrays(GL_LINES, 0, gridLines.size() / 2);
+
+        // Draw Planets
+        glUseProgram(objShader);
+        glUniformMatrix4fv(glGetUniformLocation(objShader, "projection"), 1, GL_FALSE, proj.m);
+        glUniformMatrix4fv(glGetUniformLocation(objShader, "view"), 1, GL_FALSE, view.m);
+        glUniform3f(glGetUniformLocation(objShader, "viewPos"), cameraPos.x, cameraPos.y, cameraPos.z);
+        
+        // Find Sun for Light position
+        Vec3 sunPos = {0,0,0};
+        for (const auto& b : emscriptenSim->bodies()) {
+            if (b.name == "Sun" || b.name == "Sun-Earth" || b.mass >= 500) { sunPos = b.pos; break; }
+        }
+        glUniform3f(glGetUniformLocation(objShader, "lightPos"), sunPos.x, sunPos.y, sunPos.z);
+
+        glBindVertexArray(sphereMesh.VAO);
+        for (const auto& b : emscriptenSim->bodies()) {
+            Color c = bodyColors.count(b.name) ? bodyColors[b.name] : Color{0.8f,0.8f,0.8f};
+            
+            Mat4 S = scale(b.radius);
+            Mat4 T = translate(b.pos);
+            Mat4 model = T * S;
+            Mat4 normalMat = inverseTransposeScaleTranslate(b.pos, b.radius);
+
+            glUniformMatrix4fv(glGetUniformLocation(objShader, "model"), 1, GL_FALSE, model.m);
+            glUniformMatrix4fv(glGetUniformLocation(objShader, "normalMatrix"), 1, GL_FALSE, normalMat.m);
+            glUniform4f(glGetUniformLocation(objShader, "objectColor"), c.r, c.g, c.b, 1.0f);
+            
+            bool isSun = (b.name == "Sun" || b.mass >= 500);
+            glUniform1i(glGetUniformLocation(objShader, "isSun"), isSun);
+
+            glDrawElements(GL_TRIANGLES, sphereMesh.count, GL_UNSIGNED_INT, 0);
+        }
+    }
+    
+    glfwSwapBuffers(win);
+    glfwPollEvents();
+}
+
 int main() {
     if (!glfwInit()) { std::cerr << "GLFW init failed\n"; return -1; }
 
-    int W = 1000, H = 800;
+#ifdef __EMSCRIPTEN__
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#endif
     
-    GLFWwindow* win = glfwCreateWindow(W, H, "Gravity Sim 3D v0.4", nullptr, nullptr);
+    win = glfwCreateWindow(W, H, "Gravity Sim 3D v0.4", nullptr, nullptr);
     if (!win) { std::cerr << "Window creation failed\n"; glfwTerminate(); return -1; }
     glfwMakeContextCurrent(win);
     glfwSetCursorPosCallback(win, mouse_callback);
     glfwSetMouseButtonCallback(win, mouseButtonCallback);
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED); // Lock mouse inside
 
+#ifndef __EMSCRIPTEN__
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "GLAD init failed\n"; return -1;
     }
+#endif
 
     glEnable(GL_DEPTH_TEST); // Enable 3D depth buffer
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
-    GLuint gridShader = createProgram(gridVertexShaderSource, gridFragmentShaderSource);
-    GLuint objShader  = createProgram(sphereVertexShaderSource, sphereFragmentShaderSource);
+    gridShader = createProgram(gridVertexShaderSource, gridFragmentShaderSource);
+    objShader  = createProgram(sphereVertexShaderSource, sphereFragmentShaderSource);
     
-    RenderData sphereMesh = createSphere(36, 18);
+    sphereMesh = createSphere(36, 18);
     
     // Create high-resolution dynamic grid mesh
-    std::vector<float> gridLines;
-    int cols = 120, rows = 120; // Massive high resolution for beautiful curved funnels
+    int cols = 120; int rows = 120; // Massive high resolution for beautiful curved funnels
     float gridSize = 3000.0f;
     float dx = gridSize * 2.0f / cols;
     float dy = gridSize * 2.0f / rows;
@@ -450,108 +605,32 @@ int main() {
             }
         }
     }
-    GLuint gridVAO, gridVBO;
     glGenVertexArrays(1, &gridVAO); glGenBuffers(1, &gridVBO);
     glBindVertexArray(gridVAO); glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
     glBufferData(GL_ARRAY_BUFFER, gridLines.size() * sizeof(float), gridLines.data(), GL_STATIC_DRAW);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // Setup Physics: Classic Solar System Scenario
-    Simulation sim(0.01);
-    globalSim = &sim; 
+    // Add the physics initialization helper locally
+    auto setupSolarSystem = [](Simulation& sim) {
+        sim.addBody({"Sun",   {0,   0, 0}, {0,      0,    0}, 1000.0, 50.0});
+        sim.addBody({"Earth", {100, 0, 0}, {0,      3.16, 0},    1.0, 1.5});
+        sim.addBody({"Mars",  {150, 0, 0}, {0,      2.58, 0},    0.5, 1.2});
+        sim.addBody({"Moon",  {103, 0, 0}, {0,      3.90, 0},    0.01, 0.5});
+    };
+    
+    // Ensure we start with exactly the same fast physics simulation parameters
+    globalSim = new Simulation(0.01);
+    setupSolarSystem(*globalSim);
+    emscriptenSim = globalSim;
 
-    // Restoring the beautiful multi-planet layout!
-    sim.addBody({"Sun",    {0,   0,   0}, {0,    0,   0}, 1000.0, 50.0});
-    sim.addBody({"Earth",  {-300, 20, 0}, {0,   -2.2, 0},   20.0, 24.0});
-    sim.addBody({"Mars",   {250, 400, 0}, {-1.0, 1.5, 0},    8.0, 14.0});
-
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(emulateMainLoop, 0, 1);
+#else
     while (!glfwWindowShouldClose(win)) {
-        double currentFrame = glfwGetTime();
-        deltaTime = currentFrame - lastFrameTime;
-        lastFrameTime = currentFrame;
-
-        processInput(win);
-
-        if (!isPaused) {
-            Vec3 lockedPos = {0,0,0};
-            if (isSpawning && !sim.bodies().empty()) {
-                sim.getMutableBodies().back().vel = {0,0,0};
-                lockedPos = sim.bodies().back().pos;
-            }
-            
-            for (int i = 0; i < 6; ++i) {
-                sim.stepVerlet();
-            }
-
-            if (isSpawning && !sim.bodies().empty()) {
-                sim.getMutableBodies().back().pos = lockedPos;
-                sim.getMutableBodies().back().vel = {0,0,0};
-            }
-        }
-
-        glfwGetFramebufferSize(win, &W, &H);
-        glViewport(0, 0, W, H);
-        glClearColor(0.02f, 0.02f, 0.03f, 1.0f); // Dark space
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        Mat4 proj = perspective(45.0f * 3.14159f / 180.0f, (float)W / H, 0.1f, 10000.0f);
-        Mat4 view = lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
-
-        // Upload bodies list to grid shader for warping
-        glUseProgram(gridShader);
-        glUniformMatrix4fv(glGetUniformLocation(gridShader, "projection"), 1, GL_FALSE, proj.m);
-        glUniformMatrix4fv(glGetUniformLocation(gridShader, "view"), 1, GL_FALSE, view.m);
-        glUniform1i(glGetUniformLocation(gridShader, "numBodies"), sim.bodies().size());
-        
-        for(size_t i = 0; i < sim.bodies().size(); ++i) {
-            std::string nStr = "bodyPos[" + std::to_string(i) + "]";
-            std::string mStr = "bodyMass[" + std::to_string(i) + "]";
-            glUniform3f(glGetUniformLocation(gridShader, nStr.c_str()), 
-                        (float)sim.bodies()[i].pos.x, (float)sim.bodies()[i].pos.y, (float)sim.bodies()[i].pos.z);
-            glUniform1f(glGetUniformLocation(gridShader, mStr.c_str()), (float)sim.bodies()[i].mass);
-        }
-
-        // Draw Spacetime Grid
-        glBindVertexArray(gridVAO);
-        glDrawArrays(GL_LINES, 0, gridLines.size() / 2);
-
-        // Draw Planets
-        glUseProgram(objShader);
-        glUniformMatrix4fv(glGetUniformLocation(objShader, "projection"), 1, GL_FALSE, proj.m);
-        glUniformMatrix4fv(glGetUniformLocation(objShader, "view"), 1, GL_FALSE, view.m);
-        glUniform3f(glGetUniformLocation(objShader, "viewPos"), cameraPos.x, cameraPos.y, cameraPos.z);
-        
-        // Find Sun for Light position
-        Vec3 sunPos = {0,0,0};
-        for (const auto& b : sim.bodies()) {
-            if (b.name == "Sun" || b.name == "Sun-Earth" || b.mass >= 500) { sunPos = b.pos; break; }
-        }
-        glUniform3f(glGetUniformLocation(objShader, "lightPos"), sunPos.x, sunPos.y, sunPos.z);
-
-        glBindVertexArray(sphereMesh.VAO);
-        for (const auto& b : sim.bodies()) {
-            Color c = bodyColors.count(b.name) ? bodyColors[b.name] : Color{0.8f,0.8f,0.8f};
-            
-            Mat4 S = scale(b.radius);
-            Mat4 T = translate(b.pos);
-            Mat4 model = T * S;
-            Mat4 normalMat = inverseTransposeScaleTranslate(b.pos, b.radius);
-
-            glUniformMatrix4fv(glGetUniformLocation(objShader, "model"), 1, GL_FALSE, model.m);
-            glUniformMatrix4fv(glGetUniformLocation(objShader, "normalMatrix"), 1, GL_FALSE, normalMat.m);
-            glUniform4f(glGetUniformLocation(objShader, "objectColor"), c.r, c.g, c.b, 1.0f);
-            
-            bool isSun = (b.name == "Sun" || b.mass >= 500);
-            glUniform1i(glGetUniformLocation(objShader, "isSun"), isSun);
-
-            glDrawElements(GL_TRIANGLES, sphereMesh.count, GL_UNSIGNED_INT, 0);
-        }
-        
-        glfwSwapBuffers(win);
-        glfwPollEvents();
+        emulateMainLoop();
     }
-
     glfwTerminate();
+#endif
     return 0;
 }

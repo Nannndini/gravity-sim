@@ -161,9 +161,10 @@ void main() {
         warpX += pull * diff.x / dist;
         warpY += pull * diff.y / dist;
         
-        // dip Z coordinate exactly like Einstein metric space representation
-        float warpZ = min(bodyMass[i] * 350.0 / sqrt(dist), 150.0);
-        z -= warpZ;
+        // Einstein Schwarzschild mathematically correct depth funnel
+        float rs = bodyMass[i] * 5.0; // Scaled to our units
+        float dz = 2.0 * sqrt(max(rs * (dist * 10.0 - rs), 0.0));
+        z -= dz * 1.5;
     }
     
     vec2 pos = aPos + vec2(warpX, warpY);
@@ -215,8 +216,8 @@ uniform bool isSun;
 
 void main() {
     if (isSun) {
-        // Sun is pure bright color
-        FragColor = vec4(objectColor.rgb * 1.2, objectColor.a);
+        // Massive over-exposure for bloom effect
+        FragColor = vec4(objectColor.rgb * 100.0, objectColor.a);
         return;
     }
 
@@ -389,9 +390,6 @@ int main() {
     sim.addBody({"Moon",   {308, 0,   0}, {0,    3.90,0},   0.01,  4.0});
     sim.addBody({"Jupiter",{650, 0,   0}, {0,    2.18,0},    5.0, 18.0});
 
-    std::map<std::string, std::vector<Vec3>> trails;
-    const size_t MAX_TRAIL = 400;
-
     while (!glfwWindowShouldClose(win)) {
         double currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrameTime;
@@ -401,12 +399,6 @@ int main() {
 
         for (int i = 0; i < 6; ++i) {
             sim.stepVerlet();
-            for (const auto& b : sim.bodies()) {
-                trails[b.name].push_back(b.pos);
-                if (trails[b.name].size() > MAX_TRAIL) {
-                    trails[b.name].erase(trails[b.name].begin());
-                }
-            }
         }
 
         glfwGetFramebufferSize(win, &W, &H);
@@ -467,34 +459,6 @@ int main() {
             glDrawElements(GL_TRIANGLES, sphereMesh.count, GL_UNSIGNED_INT, 0);
         }
         
-        // Draw Trails as flat lines using the sphere shader but ignoring lighting
-        glBindVertexArray(gridVAO); // reuse VAO but will stream new VBO data dynamically
-        GLuint trailVBO; glGenBuffers(1, &trailVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, trailVBO);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0);
-        glDisableVertexAttribArray(1); // Normal not used here
-
-        glUniform1i(glGetUniformLocation(objShader, "isSun"), 1); // unlit
-        Mat4 ident;
-        glUniformMatrix4fv(glGetUniformLocation(objShader, "model"), 1, GL_FALSE, ident.m);
-
-        for (const auto& b : sim.bodies()) {
-            const auto& t = trails[b.name];
-            if (t.size() < 2) continue;
-            std::vector<float> tPoints;
-            for(size_t i = 1; i < t.size(); ++i) {
-                tPoints.push_back(t[i-1].x); tPoints.push_back(t[i-1].y); tPoints.push_back(t[i-1].z);
-                tPoints.push_back(t[i].x);   tPoints.push_back(t[i].y);   tPoints.push_back(t[i].z);
-            }
-            glBufferData(GL_ARRAY_BUFFER, tPoints.size() * sizeof(float), tPoints.data(), GL_STREAM_DRAW);
-            
-            Color c = bodyColors.count(b.name) ? bodyColors[b.name] : Color{1,1,1};
-            glUniform4f(glGetUniformLocation(objShader, "objectColor"), c.r, c.g, c.b, 0.4f);
-            glDrawArrays(GL_LINES, 0, tPoints.size() / 3);
-        }
-        glDeleteBuffers(1, &trailVBO); // clean up
-
         glfwSwapBuffers(win);
         glfwPollEvents();
     }

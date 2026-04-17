@@ -94,135 +94,92 @@ bool wasTabPressed = false;
 // Sandbox Mode Globals
 bool isPaused = false;
 bool wasKPressed = false;
-bool isSpawning = false;
 Simulation* globalSim = nullptr; // For callbacks
+
+// Free Cam & Spawning Globals
+bool isDraggingCamera = false;
+bool isSlingshotting = false;
+double dragStartX = 0.0, dragStartY = 0.0;
+double currentMouseX = 0.0, currentMouseY = 0.0;
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
     if (!globalSim) return;
-    
-#ifdef __EMSCRIPTEN__
-    if (action == GLFW_PRESS) {
-        EM_ASM(
-            var canvas = document.getElementById('canvas');
-            if (canvas && document.pointerLockElement !== canvas) {
-                canvas.requestPointerLock();
-            }
-        );
+
+    if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+        if (action == GLFW_PRESS) {
+            isDraggingCamera = true;
+            firstMouse = true;
+        } else if (action == GLFW_RELEASE) {
+            isDraggingCamera = false;
+        }
     }
-#endif
 
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
-            Vec3 pos = cameraPos + cameraFront * 150.0f; // Shoot from camera
-            Vec3 vel = {cameraFront.x * 6.0, cameraFront.y * 6.0, cameraFront.z * 6.0}; // Projectile speed
-            globalSim->addBody({"Spawned", pos, vel, 2.0, 5.0});
-            isSpawning = true;
-        } else if (action == GLFW_RELEASE) {
-            isSpawning = false;
-        }
-    }
-    if (isSpawning && button == GLFW_MOUSE_BUTTON_RIGHT) {
-        if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-            auto& bodies = globalSim->getMutableBodies();
-            if (!bodies.empty()) {
-                bodies.back().mass *= 1.2;
-                bodies.back().radius = std::cbrt(bodies.back().mass) * 8.0f;
-            }
+            isSlingshotting = true;
+            dragStartX = currentMouseX;
+            dragStartY = currentMouseY;
+        } else if (action == GLFW_RELEASE && isSlingshotting) {
+            isSlingshotting = false;
+            // Slingshot Planet Vector (Drag down = shoot up)
+            double vx = dragStartX - currentMouseX;
+            double vy = dragStartY - currentMouseY;
+
+            float speedScale = 0.03f;
+            Vec3 vel = cameraFront * 15.0f; // Base ejection speed
+            vel = vel + cross(cameraFront, cameraUp).normalized() * (vx * speedScale);
+            vel = vel + cameraUp * (vy * speedScale);
+
+            Vec3 pos = cameraPos + cameraFront * 150.0f; // Shoot from slightly ahead
+            globalSim->addBody({"Slingshot", pos, vel, 2.0, 5.0});
         }
     }
 }
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
-    if(!isMouseLocked) {
-        firstMouse = true;
-        return;
+    currentMouseX = xpos;
+    currentMouseY = ypos;
+
+    if (isDraggingCamera) {
+        if (firstMouse) { lastX = xpos; lastY = ypos; firstMouse = false; }
+        float xoffset = xpos - lastX;
+        float yoffset = lastY - ypos; 
+        lastX = xpos; lastY = ypos;
+
+        float sensitivity = 0.2f;
+        yaw += xoffset * sensitivity;
+        pitch += yoffset * sensitivity;
+
+        if (pitch > 89.0f) pitch = 89.0f;
+        if (pitch < -89.0f) pitch = -89.0f;
+
+        Vec3 front;
+        front.x = cos(yaw * 3.14159f / 180.0) * cos(pitch * 3.14159f / 180.0);
+        front.y = sin(yaw * 3.14159f / 180.0) * cos(pitch * 3.14159f / 180.0);
+        front.z = sin(pitch * 3.14159f / 180.0);
+        cameraFront = front.normalized();
     }
-    if (firstMouse) { lastX = xpos; lastY = ypos; firstMouse = false; }
-    float xoffset = xpos - lastX;
-    float yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
-    lastX = xpos; lastY = ypos;
-
-    float sensitivity = 0.1f;
-    yaw += xoffset * sensitivity;
-    pitch += yoffset * sensitivity;
-
-    if (pitch > 89.0f) pitch = 89.0f;
-    if (pitch < -89.0f) pitch = -89.0f;
-
-    Vec3 front;
-    front.x = cos(yaw * 3.14159f / 180.0) * cos(pitch * 3.14159f / 180.0);
-    front.y = sin(yaw * 3.14159f / 180.0) * cos(pitch * 3.14159f / 180.0);
-    front.z = sin(pitch * 3.14159f / 180.0);
-    cameraFront = front.normalized();
 }
 
 void processInput(GLFWwindow *window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) 
         glfwSetWindowShouldClose(window, true);
-        
-    // Toggle mouse lock using TAB
-    bool isTabPressed = glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS;
-    if (isTabPressed && !wasTabPressed) {
-        isMouseLocked = !isMouseLocked;
-        if (isMouseLocked) glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        else glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-    }
-    wasTabPressed = isTabPressed;
-
-    if (!isMouseLocked) return;
 
     float cameraSpeed = 500.0f * deltaTime;
     bool shiftPressed = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
     if (shiftPressed) cameraSpeed *= 4.0f;
+
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cameraPos += cameraFront * cameraSpeed;
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cameraPos = cameraPos - (cameraFront * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cameraPos = cameraPos - (cross(cameraFront, cameraUp).normalized() * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cameraPos += cross(cameraFront, cameraUp).normalized() * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) cameraPos += cameraUp * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) cameraPos = cameraPos - (cameraUp * cameraSpeed);
 
     // Pause toggle
     bool kPressed = glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS;
     if (kPressed && !wasKPressed) isPaused = !isPaused;
     wasKPressed = kPressed;
-
-    // Keyboard-only Spawning (Hold SPACE to spawn, M to increase mass)
-    static bool wasSpace = false;
-    bool spaceDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-    if (spaceDown && !wasSpace && globalSim) {
-        Vec3 pos = cameraPos + cameraFront * 1200.0f;
-        globalSim->addBody({"Spawned", pos, {0,0,0}, 15.0, 20.0});
-        isSpawning = true;
-    }
-    if (!spaceDown && wasSpace) {
-        // If space is released and mouse isn't holding, let go
-        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
-            isSpawning = false;
-        }
-    }
-    wasSpace = spaceDown;
-
-    static double lastM = 0;
-    if (isSpawning && glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS && globalSim) {
-        if (glfwGetTime() - lastM > 0.1) { // Throttle growth rate to match repeated clicking
-            auto& bodies = globalSim->getMutableBodies();
-            if(!bodies.empty()){
-                bodies.back().mass *= 1.2;
-                bodies.back().radius = std::cbrt(bodies.back().mass) * 8.0f;
-            }
-            lastM = glfwGetTime();
-        }
-    }
-
-    // Sandbox positioning
-    if (isSpawning && globalSim) {
-        auto& bodies = globalSim->getMutableBodies();
-        if (!bodies.empty()) {
-            float moveSpeed = bodies.back().radius * 0.15f * (shiftPressed ? 4.0f : 1.0f);
-            if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) bodies.back().pos.y += moveSpeed;
-            if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) bodies.back().pos.y -= moveSpeed;
-            if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) bodies.back().pos.x += moveSpeed;
-            if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) bodies.back().pos.x -= moveSpeed;
-        }
-    }
 }
 
 // ── Shaders ──────────────────────────────────────────────────────────────────
@@ -508,19 +465,8 @@ void emulateMainLoop() {
     processInput(win);
 
     if (!isPaused && emscriptenSim) {
-        Vec3 lockedPos = {0,0,0};
-        if (isSpawning && !emscriptenSim->bodies().empty()) {
-            emscriptenSim->getMutableBodies().back().vel = {0,0,0};
-            lockedPos = emscriptenSim->bodies().back().pos;
-        }
-        
         for (int i = 0; i < 50; ++i) {
             emscriptenSim->stepVerlet();
-        }
-
-        if (isSpawning && !emscriptenSim->bodies().empty()) {
-            emscriptenSim->getMutableBodies().back().pos = lockedPos;
-            emscriptenSim->getMutableBodies().back().vel = {0,0,0};
         }
     }
 
@@ -623,6 +569,27 @@ void emulateMainLoop() {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDrawArrays(GL_LINE_STRIP, 0, lineData.size() / 3);
             glDisable(GL_BLEND);
+        }
+        
+        // 4. Draw Slingshot Aim Line
+        if (isSlingshotting) {
+            float speedScale = 0.03f;
+            double vx = dragStartX - currentMouseX;
+            double vy = dragStartY - currentMouseY;
+            Vec3 endOff = cross(cameraFront, cameraUp).normalized() * (vx * speedScale) + cameraUp * (vy * speedScale);
+            
+            Vec3 p1 = cameraPos + cameraFront * 150.0f;
+            Vec3 p2 = p1 + cameraFront * 15.0f + endOff * 100.0f; 
+            
+            float slingData[] = { (float)p1.x, (float)p1.y, (float)p1.z, (float)p2.x, (float)p2.y, (float)p2.z };
+            glUseProgram(trailShader);
+            glBindVertexArray(trailVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, trailVBO);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(slingData), slingData, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+            glUniform4f(glGetUniformLocation(trailShader, "trailColor"), 1.0f, 0.2f, 0.2f, 1.0f); // Red aiming laser
+            glDrawArrays(GL_LINES, 0, 2);
         }
     }
     

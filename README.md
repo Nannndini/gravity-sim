@@ -4,7 +4,7 @@
 
 A cinematic, interactive 3D N-body gravity simulation built in C++ and OpenGL.
 
-Inspired by [kavan's "Simulating Gravity in C++"] — built from scratch as a learning project.
+Inspired by kavan's "Simulating Gravity in C++" — built from scratch as a learning project.
 
 ## What it does
 
